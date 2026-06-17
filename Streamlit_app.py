@@ -24,7 +24,7 @@ from Telos_prime.tsne_analysis import (
 )
 
 
-st.set_page_config(page_title="Project Telos", layout="wide")
+st.set_page_config(page_title="FASTA Comparator (FCGR + PCA)", layout="wide")
 
 
 def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
@@ -55,6 +55,11 @@ def main() -> None:
     with st.sidebar:
         st.header("Settings")
         k = st.slider("K-mer size (k)", min_value=2, max_value=8, value=4, step=1)
+        if k >= 7:
+            st.caption(
+                f"⚠️ k={k} means {4**k:,} features per sequence. Covariance "
+                f"heatmaps will be disabled at this size to avoid crashing."
+            )
         normalize = st.checkbox("Normalize FCGR (frequencies, not raw counts)", value=True)
         treat_u_as_t = st.checkbox("Treat U as T (for RNA sequences)", value=True)
         n_components = st.slider("PCA components", min_value=2, max_value=5, value=2, step=1)
@@ -226,22 +231,35 @@ def main() -> None:
 
     if show_covariance:
         st.subheader("Feature covariance")
-        st.caption(
-            "Covariance between FCGR feature positions (k-mer bins) across "
-            "your uploaded sequences. Large matrices may take a moment to render."
-        )
-        _, fig_cov = plot_full_covariance(X, save_path=None, return_fig=True)
-        st.pyplot(fig_cov)
 
-        if k <= 5:
-            labels_kmer = get_kmer_labels(k)
-            step = max(1, len(labels_kmer) // 32)
-            fig_cov_labeled = plot_covariance_with_labels(
-                X, labels=labels_kmer, step=step, save_path=None, return_fig=True
+        n_features = X.shape[1]
+        MAX_SAFE_FEATURES = 4096  # corresponds to k <= 6 (4^6 = 4096)
+
+        if n_features > MAX_SAFE_FEATURES:
+            st.warning(
+                f"Skipping covariance heatmap: at k={k}, the feature matrix has "
+                f"{n_features:,} columns, producing a {n_features:,}\u00d7{n_features:,} "
+                f"covariance matrix. This is too large to render safely and will "
+                f"crash the browser or run out of memory. Lower k to 6 or below "
+                f"(4096 features or fewer) to see covariance heatmaps."
             )
-            st.pyplot(fig_cov_labeled)
         else:
-            st.caption("Labeled covariance heatmap skipped for k > 5 (too many k-mers to label readably).")
+            st.caption(
+                "Covariance between FCGR feature positions (k-mer bins) across "
+                "your uploaded sequences. Large matrices may take a moment to render."
+            )
+            _, fig_cov = plot_full_covariance(X, save_path=None, return_fig=True)
+            st.pyplot(fig_cov)
+
+            if k <= 5:
+                labels_kmer = get_kmer_labels(k)
+                step = max(1, len(labels_kmer) // 32)
+                fig_cov_labeled = plot_covariance_with_labels(
+                    X, labels=labels_kmer, step=step, save_path=None, return_fig=True
+                )
+                st.pyplot(fig_cov_labeled)
+            else:
+                st.caption("Labeled covariance heatmap skipped for k > 5 (too many k-mers to label readably).")
 
 
 if __name__ == "__main__":
