@@ -24,7 +24,7 @@ from Telos_prime.tsne_analysis import (
 )
 
 
-st.set_page_config(page_title="FASTA Comparator (FCGR + PCA)", layout="wide")
+st.set_page_config(page_title="Project Telos", layout="wide")
 
 
 def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
