@@ -3,14 +3,26 @@ from __future__ import annotations
 import io
 from typing import List
 
+import matplotlib
+matplotlib.use("Agg")
+import numpy as np
 import pandas as pd
 import streamlit as st
 from Bio import SeqIO
 
-from Telos_prime.composition import atgc_content, gc_fraction
-from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
-from Telos_prime.Chaos__game import records_to_fcgr_matrix
-from Telos_prime.PCA import run_pca, pairwise_distances
+from Project__Telos.Telos_prime.composition import atgc_content, gc_fraction
+from Project__Telos.Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
+from Project__Telos.Telos_prime.Chaos__game import records_to_fcgr_matrix
+from Project__Telos.Telos_prime.PCA import run_pca, pairwise_distances
+from Project__Telos.Telos_prime.tsne_analysis import (
+    run_pca_tsne_on_fcgr,
+    plot_tsne_scatter,
+    plot_explained_variance,
+    plot_full_covariance,
+    plot_covariance_with_labels,
+    get_kmer_labels,
+)
+
 
 st.set_page_config(page_title="FASTA Comparator (FCGR + PCA)", layout="wide")
 
@@ -38,7 +50,7 @@ def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
 
 def main() -> None:
     st.title("FASTA Sequence Comparator")
-    st.caption("Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA.")
+    st.caption("Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA + t-SNE.")
 
     with st.sidebar:
         st.header("Settings")
@@ -46,6 +58,12 @@ def main() -> None:
         normalize = st.checkbox("Normalize FCGR (frequencies, not raw counts)", value=True)
         treat_u_as_t = st.checkbox("Treat U as T (for RNA sequences)", value=True)
         n_components = st.slider("PCA components", min_value=2, max_value=5, value=2, step=1)
+        st.divider()
+        st.subheader("t-SNE settings")
+        run_tsne = st.checkbox("Run t-SNE analysis", value=False)
+        tsne_pca_dims = st.slider("PCA dims before t-SNE", min_value=2, max_value=50, value=20, step=1)
+        tsne_perplexity = st.slider("t-SNE perplexity", min_value=2, max_value=50, value=15, step=1)
+        show_covariance = st.checkbox("Show covariance heatmaps", value=False)
         st.divider()
         st.caption(
             "Tip: lower k if your sequences are short, since k=6+ needs longer "
@@ -173,6 +191,57 @@ def main() -> None:
         file_name="pca_coordinates.csv",
         mime="text/csv",
     )
+
+    # ------------------------------------------------------------------
+    # t-SNE + covariance section (optional, since it's heavier to compute)
+    # ------------------------------------------------------------------
+    if not run_tsne:
+        st.divider()
+        st.caption("Enable \"Run t-SNE analysis\" in the sidebar to see a t-SNE embedding and covariance heatmaps.")
+        return
+
+    st.divider()
+    st.subheader("t-SNE embedding")
+
+    n_samples = X.shape[0]
+    if n_samples < 3:
+        st.warning("t-SNE needs at least 3 sequences to produce a meaningful embedding. Upload more sequences.")
+        return
+
+    with st.spinner("Running PCA + t-SNE..."):
+        X_tsne, pca_tsne, _ = run_pca_tsne_on_fcgr(
+            X, pca_components=tsne_pca_dims, perplexity=tsne_perplexity
+        )
+
+    fig = plot_tsne_scatter(
+        X_tsne, labels=None, ids=ids,
+        title=f"t-SNE of FCGR features (k={k})",
+        save_path=None,
+        return_fig=True,
+    )
+    st.pyplot(fig)
+
+    fig_var = plot_explained_variance(pca_tsne, save_path=None, return_fig=True)
+    st.pyplot(fig_var)
+
+    if show_covariance:
+        st.subheader("Feature covariance")
+        st.caption(
+            "Covariance between FCGR feature positions (k-mer bins) across "
+            "your uploaded sequences. Large matrices may take a moment to render."
+        )
+        fig_cov = plot_full_covariance(X, save_path=None, return_fig=True)
+        st.pyplot(fig_cov)
+
+        if k <= 5:
+            labels_kmer = get_kmer_labels(k)
+            step = max(1, len(labels_kmer) // 32)
+            fig_cov_labeled = plot_covariance_with_labels(
+                X, labels=labels_kmer, step=step, save_path=None, return_fig=True
+            )
+            st.pyplot(fig_cov_labeled)
+        else:
+            st.caption("Labeled covariance heatmap skipped for k > 5 (too many k-mers to label readably).")
 
 
 if __name__ == "__main__":
