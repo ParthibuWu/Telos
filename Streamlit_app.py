@@ -10,11 +10,11 @@ import pandas as pd
 import streamlit as st
 from Bio import SeqIO
 
-from Project__Telos.Telos_prime.composition import atgc_content, gc_fraction
-from Project__Telos.Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
-from Project__Telos.Telos_prime.Chaos__game import records_to_fcgr_matrix
-from Project__Telos.Telos_prime.PCA import run_pca, pairwise_distances
-from Project__Telos.Telos_prime.tsne_analysis import (
+from Telos_prime.composition import atgc_content, gc_fraction
+from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
+from Telos_prime.Chaos__game import records_to_fcgr_matrix
+from Telos_prime.PCA import run_pca, pairwise_distances
+from Telos_prime.tsne_analysis import (
     run_pca_tsne_on_fcgr,
     plot_tsne_scatter,
     plot_explained_variance,
