@@ -24,7 +24,7 @@ from Telos_prime.tsne_analysis import (
 )
 
 
-st.set_page_config(page_title="Project Telos", layout="wide")
+st.set_page_config(page_title="FASTA Comparator (FCGR + PCA)", layout="wide")
 
 
 def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
@@ -230,7 +230,7 @@ def main() -> None:
             "Covariance between FCGR feature positions (k-mer bins) across "
             "your uploaded sequences. Large matrices may take a moment to render."
         )
-        fig_cov = plot_full_covariance(X, save_path=None, return_fig=True)
+        _, fig_cov = plot_full_covariance(X, save_path=None, return_fig=True)
         st.pyplot(fig_cov)
 
         if k <= 5:
