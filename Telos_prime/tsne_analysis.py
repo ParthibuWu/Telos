@@ -47,12 +47,18 @@ def plot_full_covariance(
     X: np.ndarray,
     figsize: Tuple[int, int] = (12, 10),
     save_path: Optional[str] = None,
-) -> np.ndarray:
-    """Plot the full feature covariance matrix as a heatmap."""
+    return_fig: bool = False,
+):
+    """
+    Plot the full feature covariance matrix as a heatmap.
+    Returns S (the covariance matrix). If return_fig=True, returns
+    (S, fig) instead, and leaves the figure open (caller is responsible
+    for displaying/closing it, e.g. via st.pyplot(fig)).
+    """
     N, D = X.shape
     S = compute_feature_covariance(X)
 
-    plt.figure(figsize=figsize)
+    fig = plt.figure(figsize=figsize)
     sns.heatmap(
         S, cmap='RdBu', center=0, square=True,
         cbar_kws={'label': 'Covariance'},
@@ -61,6 +67,9 @@ def plot_full_covariance(
     plt.title(f'Full Feature Covariance Matrix ({D}\u00d7{D})')
     plt.xlabel('Feature Index')
     plt.ylabel('Feature Index')
+
+    if return_fig:
+        return S, fig
     if save_path:
         plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close()
@@ -103,12 +112,17 @@ def plot_covariance_with_labels(
     step: int = 1,
     figsize: Tuple[int, int] = (16, 14),
     save_path: Optional[str] = None,
-) -> None:
-    """Plot feature covariance with k-mer labels on axes."""
+    return_fig: bool = False,
+):
+    """
+    Plot feature covariance with k-mer labels on axes.
+    Returns None by default. If return_fig=True, returns the fig
+    instead (caller is responsible for displaying/closing it).
+    """
     S = compute_feature_covariance(X)
     D = S.shape[0]
 
-    plt.figure(figsize=figsize)
+    fig = plt.figure(figsize=figsize)
     ax = sns.heatmap(
         S, cmap='RdBu', center=0, square=True,
         cbar_kws={'label': 'Covariance'},
@@ -127,11 +141,15 @@ def plot_covariance_with_labels(
     plt.xlabel('k-mer')
     plt.ylabel('k-mer')
     plt.tight_layout()
+
+    if return_fig:
+        return fig
     if save_path:
         plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close()
     else:
         plt.show()
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -180,14 +198,16 @@ def plot_tsne_scatter(
     ids: Optional[List[str]] = None,
     title: str = "t-SNE of FCGR features",
     save_path: Optional[str] = None,
-) -> None:
+    return_fig: bool = False,
+):
     """
     Scatter plot of t-SNE coordinates. If `labels` is provided (e.g. a
     species name, sample group, or category per sequence), points are
     colored by category with a legend. Otherwise points are plotted
     uniformly and annotated with `ids` if given.
+    Returns None by default, or the fig if return_fig=True.
     """
-    plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(10, 8))
 
     if labels is not None:
         unique_labels = sorted(set(labels))
@@ -210,18 +230,23 @@ def plot_tsne_scatter(
     plt.ylabel('t-SNE Dimension 2')
     plt.title(title)
     plt.grid(alpha=0.3)
+
+    if return_fig:
+        return fig
     if save_path:
         plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close()
     else:
         plt.show()
+    return None
 
 
 def plot_explained_variance(
     pca: PCA,
     save_path: Optional[str] = None,
-) -> None:
-    plt.figure(figsize=(10, 4))
+    return_fig: bool = False,
+):
+    fig = plt.figure(figsize=(10, 4))
     plt.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
     plt.axhline(y=0.9, color='r', linestyle='--', label='90% variance')
     plt.xlabel('Number of Principal Components')
@@ -229,11 +254,15 @@ def plot_explained_variance(
     plt.title('PCA Cumulative Explained Variance')
     plt.legend()
     plt.grid(alpha=0.3)
+
+    if return_fig:
+        return fig
     if save_path:
         plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close()
     else:
         plt.show()
+    return None
 
 
 # ----------------------------------------------------------------------
