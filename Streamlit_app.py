@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from typing import List
+from typing import List, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from Bio import SeqIO
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
 
 from Telos_prime.composition import atgc_content, gc_fraction
 from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
@@ -24,7 +27,7 @@ from Telos_prime.tsne_analysis import (
 )
 
 
-st.set_page_config(page_title="FASTA Comparator (FCGR + PCA)", layout="wide")
+st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + K-Means)", layout="wide")
 
 
 def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
@@ -48,9 +51,59 @@ def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
     return records
 
 
+def run_kmeans_on_pca(
+    coords: np.ndarray,
+    n_clusters: Optional[int] = None,
+    scale: bool = True,
+    random_state: int = 0,
+    auto_k_max: int = 10,
+) -> tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Perform K-means clustering on PCA coordinates.
+    
+    Returns:
+        labels, centroids_orig, chosen_K, silhouette_scores, scaled_data (if scaled)
+    """
+    if scale:
+        scaler = StandardScaler()
+        data = scaler.fit_transform(coords)
+    else:
+        data = coords
+
+    if n_clusters is None:
+        # Auto-select K using silhouette score
+        best_k = 2
+        best_score = -1
+        scores = []
+        max_k = min(auto_k_max, data.shape[0] - 1)
+        for k in range(2, max_k + 1):
+            km = KMeans(n_clusters=k, random_state=random_state, n_init=10)
+            labels = km.fit_predict(data)
+            score = silhouette_score(data, labels)
+            scores.append(score)
+            if score > best_score:
+                best_score = score
+                best_k = k
+        n_clusters = best_k
+        sil_scores = np.array(scores)
+    else:
+        sil_scores = None
+
+    km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    labels = km.fit_predict(data)
+    centroids_scaled = km.cluster_centers_
+
+    if scale:
+        centroids_orig = scaler.inverse_transform(centroids_scaled)
+    else:
+        centroids_orig = centroids_scaled
+
+    return labels, centroids_orig, n_clusters, sil_scores, (data if scale else None)
+
+
 def main() -> None:
     st.title("FASTA Sequence Comparator")
-    st.caption("Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA + t-SNE.")
+    st.caption("Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA + t-SNE + K-Means.")
 
     with st.sidebar:
         st.header("Settings")
@@ -64,6 +117,22 @@ def main() -> None:
         treat_u_as_t = st.checkbox("Treat U as T (for RNA sequences)", value=True)
         n_components = st.slider("PCA components", min_value=2, max_value=5, value=2, step=1)
         st.divider()
+
+        # --- NEW: K-Means section ---
+        st.subheader("K-Means clustering")
+        run_kmeans_option = st.checkbox("Run K-means on PCA coordinates", value=False)
+        if run_kmeans_option:
+            kmeans_auto = st.checkbox("Automatically select K (silhouette)", value=True)
+            if not kmeans_auto:
+                kmeans_k = st.slider("Number of clusters (K)", min_value=2, max_value=10, value=3, step=1)
+            else:
+                kmeans_k = None  # will be auto-determined
+            scale_pca = st.checkbox("Scale PCA features before clustering", value=True)
+        else:
+            kmeans_k = None
+            scale_pca = False
+        st.divider()
+
         st.subheader("t-SNE settings")
         run_tsne = st.checkbox("Run t-SNE analysis", value=False)
         tsne_pca_dims = st.slider("PCA dims before t-SNE", min_value=2, max_value=50, value=20, step=1)
@@ -167,6 +236,51 @@ def main() -> None:
         st.dataframe(variance_df, use_container_width=True, hide_index=True)
         st.caption(f"Cumulative: {pca.explained_variance_ratio_.sum():.4f}")
 
+    # ----- K-Means clustering -----
+    cluster_labels = None
+    centroids = None
+    if run_kmeans_option:
+        with st.spinner("Running K-means clustering..."):
+            if kmeans_auto:
+                cluster_labels, centroids, chosen_k, sil_scores, _ = run_kmeans_on_pca(
+                    coords, n_clusters=None, scale=scale_pca, random_state=0, auto_k_max=10
+                )
+                st.info(f"Auto-selected K = {chosen_k} based on silhouette score.")
+                if sil_scores is not None:
+                    # Show silhouette scores for each K
+                    sil_df = pd.DataFrame({
+                        "K": range(2, min(10, coords.shape[0]-1)+1),
+                        "Silhouette": sil_scores
+                    })
+                    st.dataframe(sil_df, use_container_width=True)
+            else:
+                cluster_labels, centroids, chosen_k, _, _ = run_kmeans_on_pca(
+                    coords, n_clusters=kmeans_k, scale=scale_pca, random_state=0
+                )
+                st.info(f"Used K = {kmeans_k}")
+
+        # Compute silhouette score for the chosen clustering
+        sil_score = silhouette_score(coords, cluster_labels) if not scale_pca else None
+        if sil_score is not None:
+            st.metric("Silhouette score", value=f"{sil_score:.4f}")
+
+        # Store cluster assignments in a DataFrame
+        cluster_df = pd.DataFrame({
+            "ID": ids,
+            "Cluster": cluster_labels
+        })
+        st.write("**Cluster assignments**")
+        st.dataframe(cluster_df, use_container_width=True)
+
+        # Add download for cluster assignments
+        st.download_button(
+            "Download cluster assignments as CSV",
+            data=cluster_df.to_csv(index=False).encode("utf-8"),
+            file_name="kmeans_clusters.csv",
+            mime="text/csv",
+        )
+
+    # --- Plot PCA scatter, colored by cluster if available ---
     with col2:
         if actual_components >= 2:
             plot_df = pd.DataFrame(
@@ -176,12 +290,25 @@ def main() -> None:
                     "ID": ids,
                 }
             )
-            st.scatter_chart(plot_df, x="PC1", y="PC2", color=None, size=80)
+            if cluster_labels is not None:
+                plot_df["Cluster"] = cluster_labels.astype(str)
+                # Use Streamlit's scatter_chart with color by cluster
+                st.scatter_chart(plot_df, x="PC1", y="PC2", color="Cluster", size=80)
+                # Also show centroids if desired? Streamlit doesn't support overlay easily.
+                # We'll add a second chart with centroids if needed, but for simplicity we'll
+                # just mention them in text.
+                if centroids is not None:
+                    st.caption(f"Cluster centroids (PC1, PC2):\n" +
+                               "\n".join([f"Cluster {i}: ({c[0]:.3f}, {c[1]:.3f})" for i, c in enumerate(centroids)]))
+            else:
+                st.scatter_chart(plot_df, x="PC1", y="PC2", color=None, size=80)
         else:
             st.write("Need at least 2 components to plot PC1 vs PC2.")
 
     st.write("**PCA coordinates**")
     coord_cols = {f"PC{i+1}": coords[:, i] for i in range(actual_components)}
+    if cluster_labels is not None:
+        coord_cols["Cluster"] = cluster_labels
     coord_df = pd.DataFrame({"ID": ids, **coord_cols})
     st.dataframe(coord_df, use_container_width=True, hide_index=True)
 
