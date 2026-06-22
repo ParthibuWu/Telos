@@ -15,3 +15,11 @@ from Project__Telos.Telos_prime.fasta_io import (
     process_fasta_file,
     records_to_summary_rows,
 )
+
+# New clustering imports
+from .clustering import (
+    run_kmeans,
+    run_dbscan,
+    plot_dbscan_results,
+    plot_k_distance,
+)
