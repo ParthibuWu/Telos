@@ -4,12 +4,13 @@ import io
 from typing import List, Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 import streamlit as st
 from Bio import SeqIO
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 
@@ -27,7 +28,7 @@ from Telos_prime.tsne_analysis import (
 )
 
 
-st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + K-Means)", layout="wide")
+st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + Clustering)", layout="wide")
 
 
 def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
@@ -57,12 +58,10 @@ def run_kmeans_on_pca(
     scale: bool = True,
     random_state: int = 0,
     auto_k_max: int = 10,
-) -> tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray], Optional[np.ndarray]]:
+) -> tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
     Perform K-means clustering on PCA coordinates.
-    
-    Returns:
-        labels, centroids_orig, chosen_K, silhouette_scores, scaled_data (if scaled)
+    Returns: labels, centroids_orig, chosen_K, silhouette_scores
     """
     if scale:
         scaler = StandardScaler()
@@ -71,7 +70,6 @@ def run_kmeans_on_pca(
         data = coords
 
     if n_clusters is None:
-        # Auto-select K using silhouette score
         best_k = 2
         best_score = -1
         scores = []
@@ -98,12 +96,39 @@ def run_kmeans_on_pca(
     else:
         centroids_orig = centroids_scaled
 
-    return labels, centroids_orig, n_clusters, sil_scores, (data if scale else None)
+    return labels, centroids_orig, n_clusters, sil_scores
+
+
+def run_dbscan_on_pca(
+    coords: np.ndarray,
+    eps: float = 0.5,
+    min_samples: int = 5,
+    scale: bool = True,
+) -> tuple[np.ndarray, int, int]:
+    """
+    Perform DBSCAN clustering on PCA coordinates.
+    Returns: labels, n_clusters (excluding noise), n_noise
+    """
+    if scale:
+        scaler = StandardScaler()
+        data = scaler.fit_transform(coords)
+    else:
+        data = coords
+
+    dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+    labels = dbscan.fit_predict(data)
+
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = np.sum(labels == -1)
+
+    return labels, n_clusters, n_noise
 
 
 def main() -> None:
     st.title("FASTA Sequence Comparator")
-    st.caption("Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA + t-SNE + K-Means.")
+    st.caption(
+        "Upload FASTA files, inspect base composition, and compare sequences via FCGR + PCA + t-SNE + Clustering."
+    )
 
     with st.sidebar:
         st.header("Settings")
@@ -118,21 +143,54 @@ def main() -> None:
         n_components = st.slider("PCA components", min_value=2, max_value=5, value=2, step=1)
         st.divider()
 
-        # --- NEW: K-Means section ---
-        st.subheader("K-Means clustering")
-        run_kmeans_option = st.checkbox("Run K-means on PCA coordinates", value=False)
-        if run_kmeans_option:
-            kmeans_auto = st.checkbox("Automatically select K (silhouette)", value=True)
-            if not kmeans_auto:
-                kmeans_k = st.slider("Number of clusters (K)", min_value=2, max_value=10, value=3, step=1)
-            else:
-                kmeans_k = None  # will be auto-determined
+        # --- Clustering section (unified) ---
+        st.subheader("Clustering")
+        run_clustering = st.checkbox("Run clustering on PCA coordinates", value=False)
+
+        if run_clustering:
+            cluster_method = st.selectbox(
+                "Clustering algorithm",
+                options=["K-Means", "DBSCAN"],
+                index=0,
+            )
+
             scale_pca = st.checkbox("Scale PCA features before clustering", value=True)
+
+            if cluster_method == "K-Means":
+                kmeans_auto = st.checkbox("Automatically select K (silhouette)", value=True)
+                if not kmeans_auto:
+                    kmeans_k = st.slider(
+                        "Number of clusters (K)", min_value=2, max_value=10, value=3, step=1
+                    )
+                else:
+                    kmeans_k = None
+            else:  # DBSCAN
+                eps = st.slider(
+                    "eps (neighborhood radius)",
+                    min_value=0.1,
+                    max_value=5.0,
+                    value=0.5,
+                    step=0.1,
+                    help="Larger eps connects more points; smaller eps creates more clusters/noise.",
+                )
+                min_samples = st.slider(
+                    "min_samples",
+                    min_value=2,
+                    max_value=20,
+                    value=5,
+                    step=1,
+                    help="Minimum points to form a dense region. Higher values create more noise.",
+                )
         else:
-            kmeans_k = None
+            cluster_method = None
             scale_pca = False
+            kmeans_k = None
+            eps = 0.5
+            min_samples = 5
+
         st.divider()
 
+        # --- t-SNE settings ---
         st.subheader("t-SNE settings")
         run_tsne = st.checkbox("Run t-SNE analysis", value=False)
         tsne_pca_dims = st.slider("PCA dims before t-SNE", min_value=2, max_value=50, value=20, step=1)
@@ -236,47 +294,76 @@ def main() -> None:
         st.dataframe(variance_df, use_container_width=True, hide_index=True)
         st.caption(f"Cumulative: {pca.explained_variance_ratio_.sum():.4f}")
 
-    # ----- K-Means clustering -----
+    # ----- CLUSTERING EXECUTION (Unified) -----
     cluster_labels = None
-    centroids = None
-    if run_kmeans_option:
-        with st.spinner("Running K-means clustering..."):
+    centroids = None  # Only for K-Means
+    chosen_k = None
+    sil_scores = None
+    cluster_method_name = "None"
+
+    if run_clustering and cluster_method == "K-Means":
+        with st.spinner("Running K-Means clustering..."):
             if kmeans_auto:
-                cluster_labels, centroids, chosen_k, sil_scores, _ = run_kmeans_on_pca(
+                cluster_labels, centroids, chosen_k, sil_scores = run_kmeans_on_pca(
                     coords, n_clusters=None, scale=scale_pca, random_state=0, auto_k_max=10
                 )
                 st.info(f"Auto-selected K = {chosen_k} based on silhouette score.")
                 if sil_scores is not None:
-                    # Show silhouette scores for each K
+                    # Show silhouette scores for each K tested
                     sil_df = pd.DataFrame({
                         "K": range(2, min(10, coords.shape[0]-1)+1),
                         "Silhouette": sil_scores
                     })
                     st.dataframe(sil_df, use_container_width=True)
             else:
-                cluster_labels, centroids, chosen_k, _, _ = run_kmeans_on_pca(
+                cluster_labels, centroids, chosen_k, _ = run_kmeans_on_pca(
                     coords, n_clusters=kmeans_k, scale=scale_pca, random_state=0
                 )
                 st.info(f"Used K = {kmeans_k}")
 
-        # Compute silhouette score for the chosen clustering
-        sil_score = silhouette_score(coords, cluster_labels) if not scale_pca else None
-        if sil_score is not None:
+            # Compute silhouette score for the chosen clustering
+            if scale_pca:
+                # Use the scaled data for score; but we have the scaled data inside the function
+                # For simplicity, we compute on scaled coordinates.
+                scaler = StandardScaler()
+                scaled_coords = scaler.fit_transform(coords)
+                sil_score = silhouette_score(scaled_coords, cluster_labels)
+            else:
+                sil_score = silhouette_score(coords, cluster_labels)
             st.metric("Silhouette score", value=f"{sil_score:.4f}")
+            cluster_method_name = "K-Means"
 
-        # Store cluster assignments in a DataFrame
+    elif run_clustering and cluster_method == "DBSCAN":
+        with st.spinner("Running DBSCAN clustering..."):
+            cluster_labels, n_clusters_found, n_noise = run_dbscan_on_pca(
+                coords, eps=eps, min_samples=min_samples, scale=scale_pca
+            )
+            st.info(
+                f"DBSCAN found {n_clusters_found} cluster(s) and {n_noise} noise point(s) "
+                f"(labeled -1)."
+            )
+            if n_noise == coords.shape[0]:
+                st.warning(
+                    "All points are labeled as noise. Try increasing `eps` or decreasing `min_samples`."
+                )
+            elif n_clusters_found == 1:
+                st.info("Only one cluster found. The data might be too dense; try decreasing `eps`.")
+            cluster_method_name = "DBSCAN"
+            # Silhouette score is not computed for DBSCAN as it is misleading with noise.
+
+    # --- Display cluster assignments if clustering was run ---
+    if cluster_labels is not None:
         cluster_df = pd.DataFrame({
             "ID": ids,
             "Cluster": cluster_labels
         })
-        st.write("**Cluster assignments**")
+        st.write(f"**Cluster assignments ({cluster_method_name})**")
         st.dataframe(cluster_df, use_container_width=True)
 
-        # Add download for cluster assignments
         st.download_button(
-            "Download cluster assignments as CSV",
+            f"Download {cluster_method_name} cluster assignments as CSV",
             data=cluster_df.to_csv(index=False).encode("utf-8"),
-            file_name="kmeans_clusters.csv",
+            file_name=f"{cluster_method_name.lower()}_clusters.csv",
             mime="text/csv",
         )
 
@@ -291,20 +378,28 @@ def main() -> None:
                 }
             )
             if cluster_labels is not None:
+                # Convert to string for categorical coloring
                 plot_df["Cluster"] = cluster_labels.astype(str)
-                # Use Streamlit's scatter_chart with color by cluster
+                # For DBSCAN, we want noise (-1) to stand out.
+                # Streamlit's scatter_chart doesn't support custom palettes easily.
+                # We'll use altair or plotly for advanced coloring, but for simplicity,
+                # we use the built-in scatter_chart with color="Cluster".
                 st.scatter_chart(plot_df, x="PC1", y="PC2", color="Cluster", size=80)
-                # Also show centroids if desired? Streamlit doesn't support overlay easily.
-                # We'll add a second chart with centroids if needed, but for simplicity we'll
-                # just mention them in text.
-                if centroids is not None:
-                    st.caption(f"Cluster centroids (PC1, PC2):\n" +
-                               "\n".join([f"Cluster {i}: ({c[0]:.3f}, {c[1]:.3f})" for i, c in enumerate(centroids)]))
+
+                # If K-Means, show centroids in a caption
+                if cluster_method == "K-Means" and centroids is not None:
+                    st.caption(
+                        f"Cluster centroids (PC1, PC2):\n" +
+                        "\n".join([f"Cluster {i}: ({c[0]:.3f}, {c[1]:.3f})" for i, c in enumerate(centroids)])
+                    )
+                elif cluster_method == "DBSCAN":
+                    st.caption("DBSCAN does not produce centroids. Noise points are labeled -1.")
             else:
                 st.scatter_chart(plot_df, x="PC1", y="PC2", color=None, size=80)
         else:
             st.write("Need at least 2 components to plot PC1 vs PC2.")
 
+    # --- Display detailed coordinates ---
     st.write("**PCA coordinates**")
     coord_cols = {f"PC{i+1}": coords[:, i] for i in range(actual_components)}
     if cluster_labels is not None:
@@ -329,7 +424,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     if not run_tsne:
         st.divider()
-        st.caption("Enable \"Run t-SNE analysis\" in the sidebar to see a t-SNE embedding and covariance heatmaps.")
+        st.caption(
+            "Enable \"Run t-SNE analysis\" in the sidebar to see a t-SNE embedding and covariance heatmaps."
+        )
         return
 
     st.divider()
@@ -346,7 +443,9 @@ def main() -> None:
         )
 
     fig = plot_tsne_scatter(
-        X_tsne, labels=None, ids=ids,
+        X_tsne,
+        labels=None,
+        ids=ids,
         title=f"t-SNE of FCGR features (k={k})",
         save_path=None,
         return_fig=True,
