@@ -1,10 +1,9 @@
-from __future__ import annotations
+# Streamlit_app.py – corrected imports
 
 import io
 from typing import List
 
 import matplotlib
-
 matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
@@ -13,19 +12,11 @@ from Bio import SeqIO
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 
-# Import from your Telos_prime package
-from Telos_prime import (
-    FastaRecord,
-    ProcessedFastaRecord,
-    process_fasta_record,
-    records_to_fcgr_matrix,
-    run_pca,
-    pairwise_distances,
-    run_kmeans,
-    run_dbscan,
-    plot_dbscan_results,
-    plot_k_distance,
-)
+# Import directly from submodules (avoids relying on __init__.py re-exports)
+from Telos_prime.composition import atgc_content, gc_fraction
+from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
+from Telos_prime.Chaos__game import records_to_fcgr_matrix
+from Telos_prime.PCA import run_pca, pairwise_distances
 from Telos_prime.tsne_analysis import (
     run_pca_tsne_on_fcgr,
     plot_tsne_scatter,
@@ -34,6 +25,14 @@ from Telos_prime.tsne_analysis import (
     plot_covariance_with_labels,
     get_kmer_labels,
 )
+from Telos_prime.clustering import (
+    run_kmeans,
+    run_dbscan,
+    plot_dbscan_results,
+    plot_k_distance,
+)
+
+# Rest of your app code (unchanged)...
 
 st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + Clustering)", layout="wide")
 
