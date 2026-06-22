@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from typing import List, Optional
+from typing import List
 
 import matplotlib
 
@@ -10,14 +10,22 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from Bio import SeqIO
-from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 
-from Telos_prime.composition import atgc_content, gc_fraction
-from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
-from Telos_prime.Chaos__game import records_to_fcgr_matrix
-from Telos_prime.PCA import run_pca, pairwise_distances
+# Import from your Telos_prime package
+from Telos_prime import (
+    FastaRecord,
+    ProcessedFastaRecord,
+    process_fasta_record,
+    records_to_fcgr_matrix,
+    run_pca,
+    pairwise_distances,
+    run_kmeans,
+    run_dbscan,
+    plot_dbscan_results,
+    plot_k_distance,
+)
 from Telos_prime.tsne_analysis import (
     run_pca_tsne_on_fcgr,
     plot_tsne_scatter,
@@ -26,7 +34,6 @@ from Telos_prime.tsne_analysis import (
     plot_covariance_with_labels,
     get_kmer_labels,
 )
-
 
 st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + Clustering)", layout="wide")
 
@@ -50,78 +57,6 @@ def parse_uploaded_fasta(uploaded_file) -> List[FastaRecord]:
             )
         )
     return records
-
-
-def run_kmeans_on_pca(
-    coords: np.ndarray,
-    n_clusters: Optional[int] = None,
-    scale: bool = True,
-    random_state: int = 0,
-    auto_k_max: int = 10,
-) -> tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
-    """
-    Perform K-means clustering on PCA coordinates.
-    Returns: labels, centroids_orig, chosen_K, silhouette_scores
-    """
-    if scale:
-        scaler = StandardScaler()
-        data = scaler.fit_transform(coords)
-    else:
-        data = coords
-
-    if n_clusters is None:
-        best_k = 2
-        best_score = -1
-        scores = []
-        max_k = min(auto_k_max, data.shape[0] - 1)
-        for k in range(2, max_k + 1):
-            km = KMeans(n_clusters=k, random_state=random_state, n_init=10)
-            labels = km.fit_predict(data)
-            score = silhouette_score(data, labels)
-            scores.append(score)
-            if score > best_score:
-                best_score = score
-                best_k = k
-        n_clusters = best_k
-        sil_scores = np.array(scores)
-    else:
-        sil_scores = None
-
-    km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-    labels = km.fit_predict(data)
-    centroids_scaled = km.cluster_centers_
-
-    if scale:
-        centroids_orig = scaler.inverse_transform(centroids_scaled)
-    else:
-        centroids_orig = centroids_scaled
-
-    return labels, centroids_orig, n_clusters, sil_scores
-
-
-def run_dbscan_on_pca(
-    coords: np.ndarray,
-    eps: float = 0.5,
-    min_samples: int = 5,
-    scale: bool = True,
-) -> tuple[np.ndarray, int, int]:
-    """
-    Perform DBSCAN clustering on PCA coordinates.
-    Returns: labels, n_clusters (excluding noise), n_noise
-    """
-    if scale:
-        scaler = StandardScaler()
-        data = scaler.fit_transform(coords)
-    else:
-        data = coords
-
-    dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-    labels = dbscan.fit_predict(data)
-
-    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    n_noise = np.sum(labels == -1)
-
-    return labels, n_clusters, n_noise
 
 
 def main() -> None:
@@ -296,35 +231,33 @@ def main() -> None:
 
     # ----- CLUSTERING EXECUTION (Unified) -----
     cluster_labels = None
-    centroids = None  # Only for K-Means
+    centroids = None
     chosen_k = None
     sil_scores = None
     cluster_method_name = "None"
+    dbscan_model = None
 
     if run_clustering and cluster_method == "K-Means":
         with st.spinner("Running K-Means clustering..."):
             if kmeans_auto:
-                cluster_labels, centroids, chosen_k, sil_scores = run_kmeans_on_pca(
+                cluster_labels, centroids, chosen_k, sil_scores = run_kmeans(
                     coords, n_clusters=None, scale=scale_pca, random_state=0, auto_k_max=10
                 )
                 st.info(f"Auto-selected K = {chosen_k} based on silhouette score.")
                 if sil_scores is not None:
-                    # Show silhouette scores for each K tested
                     sil_df = pd.DataFrame({
                         "K": range(2, min(10, coords.shape[0]-1)+1),
                         "Silhouette": sil_scores
                     })
                     st.dataframe(sil_df, use_container_width=True)
             else:
-                cluster_labels, centroids, chosen_k, _ = run_kmeans_on_pca(
+                cluster_labels, centroids, chosen_k, _ = run_kmeans(
                     coords, n_clusters=kmeans_k, scale=scale_pca, random_state=0
                 )
                 st.info(f"Used K = {kmeans_k}")
 
             # Compute silhouette score for the chosen clustering
             if scale_pca:
-                # Use the scaled data for score; but we have the scaled data inside the function
-                # For simplicity, we compute on scaled coordinates.
                 scaler = StandardScaler()
                 scaled_coords = scaler.fit_transform(coords)
                 sil_score = silhouette_score(scaled_coords, cluster_labels)
@@ -335,7 +268,7 @@ def main() -> None:
 
     elif run_clustering and cluster_method == "DBSCAN":
         with st.spinner("Running DBSCAN clustering..."):
-            cluster_labels, n_clusters_found, n_noise = run_dbscan_on_pca(
+            cluster_labels, n_clusters_found, n_noise, dbscan_model = run_dbscan(
                 coords, eps=eps, min_samples=min_samples, scale=scale_pca
             )
             st.info(
@@ -349,9 +282,8 @@ def main() -> None:
             elif n_clusters_found == 1:
                 st.info("Only one cluster found. The data might be too dense; try decreasing `eps`.")
             cluster_method_name = "DBSCAN"
-            # Silhouette score is not computed for DBSCAN as it is misleading with noise.
 
-    # --- Display cluster assignments if clustering was run ---
+    # Display cluster assignments if clustering was run
     if cluster_labels is not None:
         cluster_df = pd.DataFrame({
             "ID": ids,
@@ -367,35 +299,49 @@ def main() -> None:
             mime="text/csv",
         )
 
-    # --- Plot PCA scatter, colored by cluster if available ---
+    # --- Plot PCA scatter, enhanced for DBSCAN ---
     with col2:
         if actual_components >= 2:
-            plot_df = pd.DataFrame(
-                {
-                    "PC1": coords[:, 0],
-                    "PC2": coords[:, 1],
-                    "ID": ids,
-                }
-            )
-            if cluster_labels is not None:
-                # Convert to string for categorical coloring
-                plot_df["Cluster"] = cluster_labels.astype(str)
-                # For DBSCAN, we want noise (-1) to stand out.
-                # Streamlit's scatter_chart doesn't support custom palettes easily.
-                # We'll use altair or plotly for advanced coloring, but for simplicity,
-                # we use the built-in scatter_chart with color="Cluster".
-                st.scatter_chart(plot_df, x="PC1", y="PC2", color="Cluster", size=80)
+            if cluster_method == "DBSCAN" and cluster_labels is not None and dbscan_model is not None:
+                # Enhanced DBSCAN plot
+                fig_dbscan = plot_dbscan_results(
+                    coords,
+                    cluster_labels,
+                    dbscan_model,
+                    ids=ids,
+                    title=f"DBSCAN Clustering (eps={eps}, min_samples={min_samples})",
+                )
+                st.pyplot(fig_dbscan)
 
-                # If K-Means, show centroids in a caption
+                # Show k-distance plot for eps selection
+                st.subheader("K-distance plot (eps selection)")
+                st.caption(
+                    "The optimal `eps` is where the plot has an 'elbow' – a sharp change in slope. "
+                    "Points to the right of the elbow are outliers."
+                )
+                fig_kdist = plot_k_distance(coords, min_samples=min_samples)
+                st.pyplot(fig_kdist)
+
+            else:
+                # Standard scatter chart for no clustering or K-Means
+                plot_df = pd.DataFrame(
+                    {
+                        "PC1": coords[:, 0],
+                        "PC2": coords[:, 1],
+                        "ID": ids,
+                    }
+                )
+                if cluster_labels is not None:
+                    plot_df["Cluster"] = cluster_labels.astype(str)
+                    st.scatter_chart(plot_df, x="PC1", y="PC2", color="Cluster", size=80)
+                else:
+                    st.scatter_chart(plot_df, x="PC1", y="PC2", color=None, size=80)
+
                 if cluster_method == "K-Means" and centroids is not None:
                     st.caption(
                         f"Cluster centroids (PC1, PC2):\n" +
                         "\n".join([f"Cluster {i}: ({c[0]:.3f}, {c[1]:.3f})" for i, c in enumerate(centroids)])
                     )
-                elif cluster_method == "DBSCAN":
-                    st.caption("DBSCAN does not produce centroids. Noise points are labeled -1.")
-            else:
-                st.scatter_chart(plot_df, x="PC1", y="PC2", color=None, size=80)
         else:
             st.write("Need at least 2 components to plot PC1 vs PC2.")
 
