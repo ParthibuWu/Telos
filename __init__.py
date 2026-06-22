@@ -1,4 +1,6 @@
-from Project__Telos.Telos_prime.composition import (
+# Telos_prime/__init__.py
+
+from .composition import (
     CANONICAL,
     BaseComposition,
     clean_atgc,
@@ -6,7 +8,7 @@ from Project__Telos.Telos_prime.composition import (
     gc_fraction,
 )
 
-from Project__Telos.Telos_prime.fasta_io import (
+from .fasta_io import (
     FastaRecord,
     ProcessedFastaRecord,
     read_fasta,
@@ -16,7 +18,7 @@ from Project__Telos.Telos_prime.fasta_io import (
     records_to_summary_rows,
 )
 
-# New clustering imports
+# New clustering module
 from .clustering import (
     run_kmeans,
     run_dbscan,
