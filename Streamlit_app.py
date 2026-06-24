@@ -32,6 +32,16 @@ from Telos_prime.clustering import (
     plot_k_distance,
 )
 
+# At the top of Streamlit_app.py, after existing imports:
+from Telos_prime.clustering import (
+    run_kmeans,
+    run_dbscan,
+    plot_dbscan_results,
+    plot_k_distance,
+    plot_genomic_track,      # new
+    plot_cluster_kmer_heatmap,  # new
+)
+
 # Rest of your app code (unchanged)...
 
 st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + Clustering)", layout="wide")
