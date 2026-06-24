@@ -1,4 +1,4 @@
-# Telos_prime/__init__.py
+
 
 from .composition import (
     CANONICAL,
@@ -18,10 +18,19 @@ from .fasta_io import (
     records_to_summary_rows,
 )
 
-# New clustering module
+
 from .clustering import (
     run_kmeans,
     run_dbscan,
     plot_dbscan_results,
     plot_k_distance,
+)
+
+from .clustering import (
+    run_kmeans,
+    run_dbscan,
+    plot_dbscan_results,
+    plot_k_distance,
+    plot_genomic_track,
+    plot_cluster_kmer_heatmap,
 )
