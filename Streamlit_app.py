@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import io
-import re
-from typing import List, Tuple
+from typing import List
 
 import matplotlib
 
@@ -14,7 +13,7 @@ from Bio import SeqIO
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 
-# Direct submodule imports (avoids __init__.py re‑export issues)
+# Direct imports from submodules (avoid relying on __init__.py re‑exports)
 from Telos_prime.composition import atgc_content, gc_fraction
 from Telos_prime.fasta_io import FastaRecord, ProcessedFastaRecord, process_fasta_record
 from Telos_prime.Chaos__game import records_to_fcgr_matrix
@@ -32,8 +31,6 @@ from Telos_prime.clustering import (
     run_dbscan,
     plot_dbscan_results,
     plot_k_distance,
-    plot_genomic_track,
-    plot_cluster_kmer_heatmap,
 )
 
 st.set_page_config(page_title="FASTA Comparator (FCGR + PCA + Clustering)", layout="wide")
@@ -189,7 +186,7 @@ def main() -> None:
             for r in processed
         ]
     )
-    st.dataframe(summary_df, width='stretch')
+    st.dataframe(summary_df, width="stretch")
 
     st.download_button(
         "Download summary as CSV",
@@ -207,6 +204,17 @@ def main() -> None:
 
     with st.spinner("Computing FCGR matrix and PCA..."):
         X, ids = records_to_fcgr_matrix(processed, k=k, normalize=normalize)
+
+        # Ensure IDs are unique for later use (distance matrix)
+        unique_ids = []
+        seen = {}
+        for id_ in ids:
+            if id_ in seen:
+                seen[id_] += 1
+                unique_ids.append(f"{id_}_{seen[id_]}")
+            else:
+                seen[id_] = 0
+                unique_ids.append(id_)
 
         max_possible = min(X.shape[0], X.shape[1])
         actual_components = min(n_components, max_possible)
@@ -227,7 +235,7 @@ def main() -> None:
     col1, col2 = st.columns([1, 2])
     with col1:
         st.write("**Explained variance**")
-        st.dataframe(variance_df, use_container_width=True, hide_index=True)
+        st.dataframe(variance_df, width="stretch", hide_index=True)
         st.caption(f"Cumulative: {pca.explained_variance_ratio_.sum():.4f}")
 
     # ----- CLUSTERING EXECUTION (Unified) -----
@@ -250,7 +258,7 @@ def main() -> None:
                         "K": range(2, min(10, coords.shape[0]-1)+1),
                         "Silhouette": sil_scores
                     })
-                    st.dataframe(sil_df, width='stretch')
+                    st.dataframe(sil_df, width="stretch")
             else:
                 cluster_labels, centroids, chosen_k, _ = run_kmeans(
                     coords, n_clusters=kmeans_k, scale=scale_pca, random_state=0
@@ -291,7 +299,7 @@ def main() -> None:
             "Cluster": cluster_labels
         })
         st.write(f"**Cluster assignments ({cluster_method_name})**")
-        st.dataframe(cluster_df, width='stretch')
+        st.dataframe(cluster_df, width="stretch")
 
         st.download_button(
             f"Download {cluster_method_name} cluster assignments as CSV",
@@ -346,37 +354,19 @@ def main() -> None:
         else:
             st.write("Need at least 2 components to plot PC1 vs PC2.")
 
-    # --- Biological Insight Visualizations ---
-    if cluster_labels is not None:
-        st.divider()
-        st.subheader("Biological Insight Visualizations")
-        
-        # 1. Genomic Track Plot
-        st.write("**Genome-Coordinate Mapping Plot**")
-        st.caption("Each horizontal bar represents a sequence fragment, colored by its cluster label. Noise is shown in grey.")
-        with st.spinner("Building genomic track..."):
-            fig_track = plot_genomic_track(processed, cluster_labels, ids)
-            st.pyplot(fig_track)
-        
-        # 2. K-mer Frequency Heatmap per Cluster
-        st.write("**Cluster-specific k-mer Enrichment Heatmap**")
-        st.caption("Heatmap of the most variable k-mers, averaged per cluster. Rows = clusters, columns = k-mers.")
-        with st.spinner("Computing k-mer heatmap..."):
-            fig_kmer = plot_cluster_kmer_heatmap(X, cluster_labels, k=k, top_n=30)
-            st.pyplot(fig_kmer)
-
     # --- Display detailed coordinates ---
     st.write("**PCA coordinates**")
     coord_cols = {f"PC{i+1}": coords[:, i] for i in range(actual_components)}
     if cluster_labels is not None:
         coord_cols["Cluster"] = cluster_labels
     coord_df = pd.DataFrame({"ID": ids, **coord_cols})
-    st.dataframe(coord_df, width='stretch')
+    st.dataframe(coord_df, width="stretch", hide_index=True)
 
     st.write("**Pairwise Euclidean distance (PCA space)**")
     dist = pairwise_distances(coords)
-    dist_df = pd.DataFrame(dist, index=ids, columns=ids).round(4)
-    st.dataframe(dist_df, width='stretch')
+    # Use unique_ids for the DataFrame to avoid duplicate column names
+    dist_df = pd.DataFrame(dist, index=unique_ids, columns=unique_ids).round(4)
+    st.dataframe(dist_df, width="stretch")
 
     st.download_button(
         "Download PCA coordinates as CSV",
@@ -408,12 +398,10 @@ def main() -> None:
             X, pca_components=tsne_pca_dims, perplexity=tsne_perplexity
         )
 
-    # Color t-SNE by cluster labels if available, else just scatter
-    tsne_colors = cluster_labels if cluster_labels is not None else None
     fig = plot_tsne_scatter(
         X_tsne,
-        labels=tsne_colors.astype(str) if tsne_colors is not None else None,
-        ids=ids if tsne_colors is None else None,
+        labels=None,
+        ids=ids,
         title=f"t-SNE of FCGR features (k={k})",
         save_path=None,
         return_fig=True,
